@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Föld keringése – pontosabb modell</title>
+  <style>
+    :root {
+      --bg: #070b1a;
+      --text: #e9eeff;
+      --muted: #a8b2d9;
+      --orbit: rgba(255, 255, 255, 0.26);
+      --peri: #84ff9f;
+      --aphe: #ff9b9b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at center, #0e1533 0%, var(--bg) 58%);
+      color: var(--text);
+      font-family: "Segoe UI", Roboto, Arial, sans-serif;
+      padding: 24px;
+    }
+
+    .card {
+      width: min(920px, 96vw);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 18px;
+      background: rgba(8, 15, 35, 0.7);
+      backdrop-filter: blur(4px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+      padding: 18px 18px 10px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(1.05rem, 2vw, 1.35rem);
+      font-weight: 650;
+    }
+
+    .subtitle {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.35;
+    }
+
+    .scene-wrap {
+      display: grid;
+      place-items: center;
+      overflow: auto;
+    }
+
+    svg {
+      width: min(860px, 100%);
+      height: auto;
+      display: block;
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(9, 18, 44, 0.65), rgba(6, 12, 30, 0.78));
+    }
+
+    .legend {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+      transform: translateY(1px);
+    }
+
+    .stats {
+      margin-left: auto;
+      color: #d8def5;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .label {
+      font-size: 13px;
+      fill: #dfe6ff;
+      paint-order: stroke;
+      stroke: rgba(7, 11, 26, 0.8);
+      stroke-width: 4px;
+      stroke-linejoin: round;
+    }
+
+    .tiny {
+      font-size: 12px;
+      fill: #b9c3ee;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Föld keringése a Nap körül (pontosabb, sematikus modell)</h1>
+    <p class="subtitle">
+      A Nap az ellipszis egyik gyújtópontjában van. A mozgás Kepler 2. törvényét közelíti:
+      perihéliumnál gyorsabb, aphéliumnál lassabb.
+    </p>
+
+    <div class="scene-wrap">
+      <svg id="orbitSvg" viewBox="0 0 860 520" aria-label="A Föld keringésének animációja">
+        <defs>
+          <radialGradient id="sunGradient" cx="30%" cy="30%">
+            <stop offset="0%" stop-color="#fff6bd" />
+            <stop offset="55%" stop-color="#ffc83d" />
+            <stop offset="100%" stop-color="#ff9700" />
+          </radialGradient>
+          <radialGradient id="earthGradient" cx="35%" cy="30%">
+            <stop offset="0%" stop-color="#d4f2ff" />
+            <stop offset="58%" stop-color="#3f94ff" />
+            <stop offset="100%" stop-color="#1a4698" />
+          </radialGradient>
+          <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" result="blur"/>
+            <feMerge>
+              <feMergeNode in="blur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+
+        <g id="scene"></g>
+      </svg>
+    </div>
+
+    <div class="legend">
+      <span><span class="dot" style="background:#ffd25d"></span>Nap (gyújtópont)</span>
+      <span><span class="dot" style="background:#66a9ff"></span>Föld + tengelyferdeség (≈23,44°)</span>
+      <span><span class="dot" style="background:var(--peri)"></span>Perihélium</span>
+      <span><span class="dot" style="background:var(--aphe)"></span>Aphélium</span>
+      <span class="stats" id="speedReadout">Sebesség: – km/s</span>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      const scene = document.getElementById('scene');
+      const speedReadout = document.getElementById('speedReadout');
+
+      const cx = 430;
+      const cy = 260;
+      const a = 290;                 // fél nagytengely
+      const e = 0.0167;              // excentricitás (Föld valós közelítés)
+      const b = a * Math.sqrt(1 - e * e);
+      const c = a * e;               // középponttól a fókusz távolsága
+
+      const sunX = cx - c;           // bal oldali fókuszban a Nap
+      const sunY = cy;
+
+      function make(tag, attrs = {}) {
+        const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+        return el;
+      }
+
+      const orbit = make('ellipse', {
+        cx, cy, rx: a, ry: b,
+        fill: 'none',
+        stroke: 'var(--orbit)',
+        'stroke-width': 2,
+        'stroke-dasharray': '7 7'
+      });
+      scene.appendChild(orbit);
+
+      const majorAxis = make('line', {
+        x1: cx - a, y1: cy,
+        x2: cx + a, y2: cy,
+        stroke: 'rgba(255,255,255,0.13)',
+        'stroke-width': 1.2
+      });
+      scene.appendChild(majorAxis);
+
+      const periX = cx - a;
+      const apheX = cx + a;
+
+      const periDot = make('circle', {
+        cx: periX, cy,
+        r: 5.2,
+        fill: 'var(--peri)',
+        filter: 'url(#softGlow)'
+      });
+      const apheDot = make('circle', {
+        cx: apheX, cy,
+        r: 5.2,
+        fill: 'var(--aphe)',
+        filter: 'url(#softGlow)'
+      });
+      scene.append(periDot, apheDot);
+
+      const periLabel = make('text', {
+        x: periX - 54,
+        y: cy - 16,
+        class: 'label'
+      });
+      periLabel.textContent = 'Perihélium ≈ 147,1 M km';
+
+      const apheLabel = make('text', {
+        x: apheX - 28,
+        y: cy - 16,
+        class: 'label'
+      });
+      apheLabel.textContent = 'Aphélium ≈ 152,1 M km';
+      scene.append(periLabel, apheLabel);
+
+      const sunGlow = make('circle', {
+        cx: sunX, cy: sunY,
+        r: 34,
+        fill: 'url(#sunGradient)',
+        filter: 'url(#softGlow)'
+      });
+      const sunCore = make('circle', {
+        cx: sunX, cy: sunY,
+        r: 20,
+        fill: '#ffd868'
+      });
+      scene.append(sunGlow, sunCore);
+
+      const sunText = make('text', {
+        x: sunX - 14,
+        y: sunY + 50,
+        class: 'label'
+      });
+      sunText.textContent = 'Nap';
+      scene.append(sunText);
+
+      const earth = make('circle', {
+        r: 10,
+        fill: 'url(#earthGradient)',
+        filter: 'url(#softGlow)'
+      });
+      scene.append(earth);
+
+      const axis = make('line', {
+        x1: 0, y1: -15,
+        x2: 0, y2: 15,
+        stroke: '#d8ebff',
+        'stroke-width': 2
+      });
+
+      const earthGroup = make('g');
+      earthGroup.append(axis, earth);
+      scene.append(earthGroup);
+
+      const tiltLabel = make('text', {
+        class: 'tiny'
+      });
+      tiltLabel.textContent = 'tengelyferdeség ≈ 23,44°';
+      scene.append(tiltLabel);
+
+      const focusLine = make('line', {
+        stroke: 'rgba(255,255,255,0.18)',
+        'stroke-width': 1.2
+      });
+      scene.append(focusLine);
+
+      function solveEccentricAnomaly(M, ecc) {
+        let E = M;
+        for (let i = 0; i < 5; i++) {
+          E -= (E - ecc * Math.sin(E) - M) / (1 - ecc * Math.cos(E));
+        }
+        return E;
+      }
+
+      const period = 12000; // ms egy "év" animációban
+      const earthTilt = -23.44; // fok
+
+      function animate(ts) {
+        if (!animate.start) animate.start = ts;
+        const t = (ts - animate.start) % period;
+        const M = (t / period) * Math.PI * 2; // mean anomaly
+        const E = solveEccentricAnomaly(M, e);
+
+        const x = cx + a * (Math.cos(E));
+        const y = cy + b * (Math.sin(E));
+
+        earthGroup.setAttribute('transform', `translate(${x} ${y}) rotate(${earthTilt})`);
+        tiltLabel.setAttribute('x', x + 14);
+        tiltLabel.setAttribute('y', y - 12);
+
+        focusLine.setAttribute('x1', sunX);
+        focusLine.setAttribute('y1', sunY);
+        focusLine.setAttribute('x2', x);
+        focusLine.setAttribute('y2', y);
+
+        const rAU = 1 - e * Math.cos(E);              // távolság AU-ban (a=1)
+        const vRel = Math.sqrt((2 / rAU) - 1);        // vis-viva (relatív)
+        const vKmS = 29.78 * vRel;                    // átlagsebességre skálázva
+
+        speedReadout.textContent = `Sebesség (közelítő): ${vKmS.toFixed(2)} km/s`;
+
+        requestAnimationFrame(animate);
+      }
+
+      requestAnimationFrame(animate);
+    })();
+  </script>
+</body>
+</html>
